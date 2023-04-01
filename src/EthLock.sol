@@ -18,31 +18,33 @@ contract EthLock is Ownable {
     error InvalidMerkleProof();
     error InvalidDepositAmount();
     error AlreadyDeposited();
+    error AlreadyClaimed();
+    error BlockNotEnded();
     error FailedTransfer();
 
     event LogClaim(address indexed user, uint256 amount);
     event LogDeposit(address indexed user, uint256 amount);
     event LogNewRoot(bytes32 merkleRoot);
 
-    function newDrop(
+    function setRoot(
         bytes32 _merkleRoot
     ) external onlyOwner {
         merkleRoot = _merkleRoot;
         emit LogNewRoot(_merkleRoot);
     }
 
-    function canClaim(bytes32[] memory _proof, uint256 _amount) public view returns (bool) {
+    function canClaim(bytes32[] memory _proof, uint128 _amount) public view returns (bool) {
         if (claimed[msg.sender]) {
-            return false;
+            revert AlreadyClaimed();
         }
         if (block.timestamp < BLOCK_END) {
-            return false;
+            revert BlockNotEnded();
         }
         bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _amount));
         return MerkleProof.verify(_proof, merkleRoot, leaf);
     }
 
-    function claim(bytes32[] memory _proof, uint256 _amount) external payable {
+    function claim(bytes32[] memory _proof, uint128 _amount) external payable {
             if (!canClaim(_proof, _amount)) {
                 revert InvalidMerkleProof();
             }
