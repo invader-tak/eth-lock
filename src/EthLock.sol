@@ -7,18 +7,21 @@ import { Ownable  } from 'openzeppelin-contracts/contracts/access/Ownable.sol';
 
 contract EthLock is Ownable {
 
-	bytes32 public merkleRoot;
-	mapping(address => bool) public deposited;
-	mapping(address => bool) public claimed;
+    uint256 private constant DEPOSIT_AMOUNT = 0.25 ether;
+    // Date and time (GMT): Monday, 15 May 2023 00:00:00
+    uint256 private constant BLOCK_END = 1684108800;
 
-    uint256 constant DEPOSIT_AMOUNT = 0.25 ether;
-	error InvalidMerkleProof();
-	error InvalidDepositAmount();
-	error AlreadyDeposited();
-	error FailedTransfer();
+    bytes32 public merkleRoot;
+    mapping(address => bool) public deposited;
+    mapping(address => bool) public claimed;
 
-	event LogClaim(address indexed user, uint256 amount);
-	event LogDeposit(address indexed user, uint256 amount);
+    error InvalidMerkleProof();
+    error InvalidDepositAmount();
+    error AlreadyDeposited();
+    error FailedTransfer();
+
+    event LogClaim(address indexed user, uint256 amount);
+    event LogDeposit(address indexed user, uint256 amount);
     event LogNewRoot(bytes32 merkleRoot);
 
     function newDrop(
@@ -28,15 +31,18 @@ contract EthLock is Ownable {
         emit LogNewRoot(_merkleRoot);
     }
 
-	function canClaim(bytes32[] memory _proof, uint256 _amount) public view returns (bool) {
+    function canClaim(bytes32[] memory _proof, uint256 _amount) public view returns (bool) {
         if (claimed[msg.sender]) {
             return false;
         }
-		bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _amount));
-		return MerkleProof.verify(_proof, merkleRoot, leaf);
-	}
+        if (block.timestamp < BLOCK_END) {
+            return false;
+        }
+        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _amount));
+        return MerkleProof.verify(_proof, merkleRoot, leaf);
+    }
 
-	function claim(bytes32[] memory _proof, uint256 _amount) external payable {
+    function claim(bytes32[] memory _proof, uint256 _amount) external payable {
             if (!canClaim(_proof, _amount)) {
                 revert InvalidMerkleProof();
             }
@@ -45,14 +51,14 @@ contract EthLock is Ownable {
             if (!sent) revert FailedTransfer();
 
             emit LogClaim(msg.sender, _amount);
-		}
+        }
 
 
-	function deposit() external payable {
-		if (msg.value == DEPOSIT_AMOUNT) revert InvalidDepositAmount();
+    function deposit() external payable {
+        if (msg.value != DEPOSIT_AMOUNT) revert InvalidDepositAmount();
         if (deposited[msg.sender]) revert AlreadyDeposited();
         deposited[msg.sender] = true;
         emit LogDeposit(msg.sender, msg.value);
-	}
+    }
 }
 
