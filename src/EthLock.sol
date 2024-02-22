@@ -1,66 +1,73 @@
-// SPDX-License-Identifier: AGPLv3
-pragma solidity 0.8.10;
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.22;
 
-import { IERC20  } from 'openzeppelin-contracts/contracts/token/ERC20/IERC20.sol';
-import { MerkleProof  } from 'openzeppelin-contracts/contracts/utils/cryptography/MerkleProof.sol';
-import { Ownable  } from 'openzeppelin-contracts/contracts/access/Ownable.sol';
+import {MerkleProof} from "openzeppelin-contracts/contracts/utils/cryptography/MerkleProof.sol";
+import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 
 contract EthLock is Ownable {
+    struct LockInfo {
+        bytes32 root;
+        uint128 amount;
+    }
 
-    uint256 private constant DEPOSIT_AMOUNT = 0.25 ether;
-    // Date and time (GMT): Monday, 15 May 2023 00:00:00
-    uint256 private constant BLOCK_END = 1684108800;
+    uint256 private noOfLocks;
+    mapping(uint256 => LockInfo) public locks;
+    mapping(uint256 => mapping(address => bool)) private claimed;
 
-    bytes32 public merkleRoot;
-    mapping(address => bool) public deposited;
-    mapping(address => bool) public claimed;
+    event LogNewLock(uint256 lockId, bytes32 merkleRoot, uint128 amount);
+    event LogClaim(address indexed account, uint256 lockId, uint128 amount);
+    event LogDeposit(address indexed account, uint256 amount);
 
-    error InvalidMerkleProof();
-    error InvalidDepositAmount();
-    error AlreadyDeposited();
+    error InvalidLockId();
     error AlreadyClaimed();
-    error BlockNotEnded();
-    error FailedTransfer();
+    error InvalidMerkleProof();
 
-    event LogClaim(address indexed user, uint256 amount);
-    event LogDeposit(address indexed user, uint256 amount);
-    event LogNewRoot(bytes32 merkleRoot);
+    constructor() Ownable(msg.sender) {}
 
-    function setRoot(
-        bytes32 _merkleRoot
-    ) external onlyOwner {
-        merkleRoot = _merkleRoot;
-        emit LogNewRoot(_merkleRoot);
+    function newLock(bytes32 merkleRoot, uint128 amount) external onlyOwner returns (uint256 lockId) {
+        lockId = noOfLocks;
+        locks[lockId] = LockInfo(merkleRoot, amount);
+        noOfLocks += 1;
+
+        emit LogNewLock(lockId, merkleRoot, amount);
     }
 
-    function canClaim(bytes32[] memory _proof, uint128 _amount) public view returns (bool) {
-        if (claimed[msg.sender]) {
-            revert AlreadyClaimed();
-        }
-        if (block.timestamp < BLOCK_END) {
-            revert BlockNotEnded();
-        }
-        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _amount));
-        return MerkleProof.verify(_proof, merkleRoot, leaf);
+    function claim(uint256 lockId, bytes32[] calldata merkleProof) external {
+        (uint128 amount, bool valid) = canClaim(msg.sender, lockId, merkleProof);
+        if (!valid) revert InvalidMerkleProof();
+
+        claimed[lockId][msg.sender] = true;
+        (bool sent,) = msg.sender.call{value: amount}("");
+
+        emit LogClaim(msg.sender, lockId, amount);
     }
 
-    function claim(bytes32[] memory _proof, uint128 _amount) external payable {
-            if (!canClaim(_proof, _amount)) {
-                revert InvalidMerkleProof();
-            }
-            claimed[msg.sender] = true;
-            (bool sent, ) = msg.sender.call{value: _amount}("");
-            if (!sent) revert FailedTransfer();
+    function canClaim(address account, uint256 lockId, bytes32[] calldata merkleProof)
+        public
+        view
+        returns (uint128 amount, bool valid)
+    {
+        if (lockId > noOfLocks) revert InvalidLockId();
+        if (claimed[lockId][account]) revert AlreadyClaimed();
 
-            emit LogClaim(msg.sender, _amount);
+        LockInfo storage _lock = locks[lockId];
+        bytes32 root = _lock.root;
+        amount = _lock.amount;
+
+        bytes32 node = keccak256(abi.encodePacked(msg.sender, amount));
+
+        if (!MerkleProof.verify(merkleProof, root, node)) {
+            valid = false;
+        } else {
+            valid = true;
         }
+    }
 
-
-    function deposit() external payable {
-        if (msg.value != DEPOSIT_AMOUNT) revert InvalidDepositAmount();
-        if (deposited[msg.sender]) revert AlreadyDeposited();
-        deposited[msg.sender] = true;
+    function deposit() public payable {
         emit LogDeposit(msg.sender, msg.value);
     }
-}
 
+    receive() external payable {
+        deposit();
+    }
+}
